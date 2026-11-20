@@ -1,55 +1,72 @@
+using System.Text.Json;
+using RapidOcrNet;
 
-using RapidOCRLib;
-
-if (args.Length != 1)
+string baseDir = AppContext.BaseDirectory;
+var modelSet = RapidOcrModelSet.PPOCRv6Small with
 {
-    Console.Error.WriteLine("Usage: dotnet run -- <passport-image-path>");
-    return;
-}
-
-string passportPath = Path.GetFullPath(args[0]);
-if (!File.Exists(passportPath))
-{
-    Console.Error.WriteLine($"Image file not found: {passportPath}");
-    return;
-}
-
-string modelsPath = Path.Combine(AppContext.BaseDirectory, "models");
-OcrLite ocr = new()
-{
-    DetPath = Path.Combine(modelsPath, "ch_PP-OCRv5_mobile_det.onnx"),
-    ClsPath = Path.Combine(modelsPath, "ch_ppocr_mobile_v2.0_cls_infer.onnx"),
-    RecPath = Path.Combine(modelsPath, "ch_PP-OCRv5_rec_mobile_infer.onnx"),
-    KeyDicPath = Path.Combine(modelsPath, "ppocrv5_dict.txt"),
+    DetModelPath = Path.Combine(baseDir, "models", "v6", "PP-OCRv6_det_small.onnx"),
+    ClsModelPath = Path.Combine(baseDir, "models", "v5", "ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx"),
+    RecModelPath = Path.Combine(baseDir, "models", "v6", "PP-OCRv6_rec_small.onnx"),
+    KeysPath     = Path.Combine(baseDir, "models", "v6", "ppocrv6_small_dict.txt")
 };
 
-string[] lines;
-TextWriter standardOutput = Console.Out;
-Console.SetOut(TextWriter.Null);
+using var ocr = new RapidOcr();
+ocr.InitModels(modelSet);
 
-try
+string testDir = Path.GetFullPath(args.Length > 0 ? args[0] : "test-passport");
+var files = Directory.GetFiles(testDir, "*.*")
+    .Where(f => f.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) ||
+                f.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase) ||
+                f.EndsWith(".png", StringComparison.OrdinalIgnoreCase))
+    .OrderBy(f => Path.GetFileName(f))
+    .ToList();
+
+Console.WriteLine($"Found {files.Count} images in {testDir}");
+
+var allResults = new Dictionary<string, object>();
+
+foreach (var file in files)
 {
-    await ocr.InitModels();
-    var result = ocr.Detect(passportPath, padding: 50);
-    if (result is null)
+    string fileName = Path.GetFileName(file);
+    try
     {
-        Console.Error.WriteLine("OCR did not return a result.");
-        return;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        OcrResult result = ocr.Detect(file, RapidOcrOptions.PPOCRv6);
+        sw.Stop();
+
+        var blocks = new List<object>();
+        if (result.TextBlocks != null)
+        {
+            foreach (var b in result.TextBlocks)
+            {
+                blocks.Add(new
+                {
+                    Text = b.Text,
+                    Score = b.BoxScore,
+                    CharAvg = b.CharScores?.Length > 0 ? b.CharScores.Average() : 0f,
+                    Points = b.BoxPoints.Select(p => new[] { p.X, p.Y }).ToArray()
+                });
+            }
+        }
+
+        allResults[fileName] = new
+        {
+            TimeMs = sw.ElapsedMilliseconds,
+            DetectTime = result.DetectTime,
+            DbNetTime = result.DbNetTime,
+            Blocks = blocks,
+            FullText = result.StrRes
+        };
+        Console.WriteLine($"[C#] {fileName}: {sw.ElapsedMilliseconds} ms, {blocks.Count} text blocks");
     }
-
-    lines = result.StrRes.Split(
-        new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
-}
-finally
-{
-    Console.SetOut(standardOutput);
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"[C# Error] {fileName}: {ex.Message}");
+        allResults[fileName] = new { Error = ex.Message };
+    }
 }
 
-if (lines.Length < 2)
-{
-    Console.Error.WriteLine("OCR returned fewer than two text lines.");
-    return;
-}
-
-Console.WriteLine(lines[^2]);
-Console.WriteLine(lines[^1]);
+string json = JsonSerializer.Serialize(allResults, new JsonSerializerOptions { WriteIndented = true });
+string outPath = Path.Combine(Directory.GetCurrentDirectory(), "csharp_test_passport_benchmark.json");
+File.WriteAllText(outPath, json);
+Console.WriteLine($"C# benchmark completed. Saved {allResults.Count} results to {outPath}");

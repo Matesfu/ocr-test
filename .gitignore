@@ -7,21 +7,22 @@
 __pycache__/
 *.py[cod]
 
-# OCR models and generated visualizations
+# OCR models and model weights
 *.onnx
+*.mnn
+*.pth
+*.tflite
+*.engine
+*.trt
+*.safetensors
+models/
+**/models/
+
+# Generated benchmark / visualization images
 vis_*.png
+dummy_test.png
 
-# Passport test images and other common binary assets
-*.png
-*.jpg
-*.jpeg
-*.bmp
-*.gif
-*.tif
-*.tiff
-*.pdf
-
-# Compiled and packaged binaries
+# Compiled and packaged binaries / libraries
 *.dll
 *.exe
 *.pdb
@@ -29,6 +30,10 @@ vis_*.png
 *.dylib
 *.nupkg
 *.zip
+*.tar.gz
+*.7z
+*.lib
+*.a
 
 # Windows metadata
 desktop.ini
